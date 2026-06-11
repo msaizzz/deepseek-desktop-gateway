@@ -22,9 +22,25 @@
 
 ## 本地 LiteLLM 说明
 
-本项目已经将 LiteLLM 源码落到本地目录：
+本项目依赖 LiteLLM 开源库（`vendor/litellm`），版本 **1.89.0**，来自：
+- 上游仓库：https://github.com/BerriAI/litellm.git
+- 分支：`litellm_internal_staging`
+- 锁定提交：`6068bb7781b66ea51930f68ed8738ac46f0bdf7d`
 
-- `vendor/litellm`
+由于 LiteLLM 是引用的开源库，**`vendor/litellm` 目录未上传至本仓库**。首次克隆后需先执行以下命令拉取源码：
+
+```powershell
+git clone --branch litellm_internal_staging https://github.com/BerriAI/litellm.git vendor/litellm
+cd vendor/litellm
+git checkout 6068bb7781b66ea51930f68ed8738ac46f0bdf7d
+cd ../..
+```
+
+或者直接使用一键引导脚本（会自动完成拉取 + 创建虚拟环境 + 安装依赖）：
+
+```powershell
+PowerShell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1
+```
 
 安装依赖时会优先从本地源码目录安装 LiteLLM，而不是从远程包仓库直接拉取已发布版本。这样做有三个好处：
 
@@ -41,12 +57,33 @@
 - `requirements.txt`：开发与运行依赖
 - `pyproject.toml`：项目打包元数据
 
-## 快速启动
+## 快速启动（开发环境）
+
+> **注意**：本项目引用了 LiteLLM 开源库（`vendor/litellm`），该目录未上传至 GitHub。
+> 首次克隆后需先执行引导脚本拉取源码，详见下方说明。
+
+### 一键初始化（推荐）
 
 ```powershell
+PowerShell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1
+py -m src.deepseek_gateway.main
+```
+
+### 分步操作
+
+```powershell
+# 1. 拉取 vendor/litellm 源码（版本 1.89.0，commit 6068bb77）
+git clone --branch litellm_internal_staging https://github.com/BerriAI/litellm.git vendor/litellm
+cd vendor/litellm
+git checkout 6068bb7781b66ea51930f68ed8738ac46f0bdf7d
+cd ..\..
+
+# 2. 创建虚拟环境并安装依赖
 py -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+
+# 3. 启动
 py -m src.deepseek_gateway.main
 ```
 
