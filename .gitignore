@@ -1,0 +1,68 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+.venv/
+.venvs/
+venv/
+virtualenv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.python-version
+
+# --- Build / Distribution ---
+build/
+dist/
+*.spec
+*.manifest
+
+# --- 引用的开源库 (Vendored open-source libraries) ---
+vendor/
+
+# --- Generated data / reports ---
+data/
+*.db
+*.sqlite3
+*.xlsx
+*.csv
+
+# --- Logs ---
+*.log
+pyi.log
+pyinstaller-build.log
+tmp.log
+
+# --- IDE / Editor ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- OS files ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- Environment / Secrets ---
+.env
+.env.*
+!.env.example
+secrets.json
+*.key
+*.pem
+*.crt
+
+# --- PyInstaller output ---
+pyinstaller-build.log
+pyi.log
+*.toc
+*.pyz
+*.pkg
+
+# --- Project specific ---
+dist/release/
