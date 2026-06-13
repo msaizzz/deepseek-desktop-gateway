@@ -42,6 +42,44 @@ class GatewayServiceSecurityToggleTests(unittest.TestCase):
 
         self.assertIn("guardrails", runtime_config)
 
+    def test_ensure_litellm_builtin_guardrails_registered_adds_content_filter(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            service = GatewayService(ConfigManager(root), object())
+
+            initializer = object()
+            guardrail_class = object()
+            fake_registry_module = SimpleNamespace(
+                guardrail_initializer_registry={},
+                guardrail_class_registry={},
+            )
+            fake_content_filter_module = SimpleNamespace(
+                guardrail_initializer_registry={"litellm_content_filter": initializer},
+                guardrail_class_registry={"litellm_content_filter": guardrail_class},
+            )
+
+            def fake_import_module(name: str) -> object:
+                modules = {
+                    "litellm.proxy.guardrails.guardrail_registry": fake_registry_module,
+                    "litellm.proxy.guardrails.guardrail_hooks.litellm_content_filter": fake_content_filter_module,
+                }
+                return modules[name]
+
+            with patch(
+                "src.deepseek_gateway.gateway_service.importlib.import_module",
+                side_effect=fake_import_module,
+            ):
+                service._ensure_litellm_builtin_guardrails_registered()
+
+        self.assertIs(
+            fake_registry_module.guardrail_initializer_registry["litellm_content_filter"],
+            initializer,
+        )
+        self.assertIs(
+            fake_registry_module.guardrail_class_registry["litellm_content_filter"],
+            guardrail_class,
+        )
+
     def test_reset_litellm_guardrail_state_clears_config_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

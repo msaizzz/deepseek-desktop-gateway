@@ -231,7 +231,77 @@ class LocalBudgetAndLoggingHandler(CustomLogger):
             status="error",
             error=str(original_exception),
         )
+
+        # 提取 guardrail 拦截信息并写入 security_events
+        self._log_guardrail_failure_event(original_exception, model_name, request_data)
+
         return None
+
+    def _log_guardrail_failure_event(
+        self,
+        original_exception: Exception,
+        model_name: str,
+        request_data: dict,
+    ) -> None:
+        """从 HTTPException(400) 中提取 LiteLLM guardrail 拦截详情，
+        写入 security_events 表。"""
+        if not isinstance(original_exception, HTTPException):
+            return
+
+        http_exc: HTTPException = original_exception
+        if http_exc.status_code != 400:
+            return
+
+        detail = http_exc.detail
+        if not isinstance(detail, dict):
+            return
+
+        # LiteLLM content filter 的 400 错误格式示例:
+        # {
+        #   'error': "Content blocked: keyword '忽略之前的指令' detected (提示注入-越狱)",
+        #   'keyword': '忽略之前的指令',
+        #   'description': '提示注入-越狱',
+        #   'guardrail_name': 'local-content-filter',
+        #   'guardrail_mode': 'pre_call',
+        # }
+        guardrail_name = str(detail.get("guardrail_name", ""))
+        if not guardrail_name:
+            return
+
+        error_msg = str(detail.get("error", ""))
+        keyword = str(detail.get("keyword", ""))
+        description = str(detail.get("description", ""))
+        guardrail_mode = str(detail.get("guardrail_mode", ""))
+
+        # 判断事件类型
+        if "injection" in error_msg.lower() or "injection" in description.lower():
+            event_type = "injection_detected"
+        elif "regex" in error_msg.lower() or "pattern" in error_msg.lower():
+            event_type = "regex_block"
+        else:
+            event_type = "keyword_block"
+
+        # 请求预览
+        request_preview = ""
+        messages = request_data.get("messages", []) or []
+        if isinstance(messages, list) and messages:
+            last_msg = messages[-1]
+            if isinstance(last_msg, dict):
+                content = last_msg.get("content", "")
+                if isinstance(content, str):
+                    request_preview = content[:200]
+                elif isinstance(content, list):
+                    request_preview = str(content)[:200]
+
+        self.database.log_security_event(
+            model=model_name,
+            event_type=event_type,
+            matched_content=keyword or error_msg[:200],
+            matched_rule=description,
+            action="BLOCK",
+            request_preview=request_preview,
+            guardrail_name=guardrail_name,
+        )
 
 
 local_budget_and_logging_handler = LocalBudgetAndLoggingHandler()

@@ -56,6 +56,7 @@ class GatewayService:
 
         config_path = self._write_runtime_config(config=config, upstream_key=upstream_key)
         self._prepare_litellm_environment(config_path)
+        self._ensure_litellm_builtin_guardrails_registered()
         self._reset_litellm_guardrail_state()
 
         proxy_server = importlib.import_module("litellm.proxy.proxy_server")
@@ -122,6 +123,49 @@ class GatewayService:
         os.environ["CONFIG_FILE_PATH"] = str(config_path)
         os.environ["LITELLM_DONT_SHOW_FEEDBACK_BOX"] = "true"
         os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")
+
+    def _ensure_litellm_builtin_guardrails_registered(self) -> None:
+        """补注册依赖目录扫描发现的 LiteLLM 内建护栏。"""
+        try:
+            registry_module = importlib.import_module(
+                "litellm.proxy.guardrails.guardrail_registry"
+            )
+            content_filter_module = importlib.import_module(
+                "litellm.proxy.guardrails.guardrail_hooks.litellm_content_filter"
+            )
+        except Exception:
+            LOGGER.debug("补注册 LiteLLM content filter 失败。", exc_info=True)
+            return
+
+        initializer_registry = getattr(
+            registry_module,
+            "guardrail_initializer_registry",
+            None,
+        )
+        class_registry = getattr(
+            registry_module,
+            "guardrail_class_registry",
+            None,
+        )
+        content_filter_initializers = getattr(
+            content_filter_module,
+            "guardrail_initializer_registry",
+            None,
+        )
+        content_filter_classes = getattr(
+            content_filter_module,
+            "guardrail_class_registry",
+            None,
+        )
+
+        if isinstance(initializer_registry, dict) and isinstance(
+            content_filter_initializers,
+            dict,
+        ):
+            initializer_registry.update(content_filter_initializers)
+
+        if isinstance(class_registry, dict) and isinstance(content_filter_classes, dict):
+            class_registry.update(content_filter_classes)
 
     def _reset_litellm_guardrail_state(self) -> None:
         """清理 LiteLLM 进程级 guardrail 状态，避免同进程重启沿用旧配置。"""
