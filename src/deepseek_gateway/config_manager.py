@@ -136,6 +136,7 @@ class AppConfig:
     host: str = "127.0.0.1"
     port: int = 8765
     monthly_budget_usd: float = 50.0
+    enable_diagnostic_logs: bool = False
     start_with_windows: bool = False
     upstream_base_url: str = "https://api.deepseek.com"
     admin_password_hash: str = ""

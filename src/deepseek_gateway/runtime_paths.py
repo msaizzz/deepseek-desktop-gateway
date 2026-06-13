@@ -24,10 +24,24 @@ def 可执行文件目录() -> Path:
     return 项目根目录()
 
 
-def _当前文档数据目录() -> Path:
-    文档目录 = Path.home() / "Documents"
-    基础目录 = 文档目录 if 文档目录.exists() else Path.home()
-    return 基础目录 / 应用目录名
+def 当前执行目录() -> Path:
+    return Path.cwd().resolve()
+
+
+def _当前执行数据目录() -> Path:
+    return 当前执行目录() / 应用目录名
+
+
+def _看起来像旧版根数据目录(路径: Path) -> bool:
+    标记项 = [
+        路径 / "config.json",
+        路径 / "secrets.json",
+        路径 / "usage.db",
+        路径 / "logs",
+        路径 / "reports",
+        路径 / "security",
+    ]
+    return any(标记.exists() for 标记 in 标记项)
 
 
 def _旧数据目录列表() -> list[Path]:
@@ -36,13 +50,17 @@ def _旧数据目录列表() -> list[Path]:
     if 本地应用数据目录:
         目录列表.append(Path(本地应用数据目录) / 旧应用目录名)
     目录列表.append(Path.home() / ".deepseek-desktop-gateway")
-    目录列表.append(_当前文档数据目录())
+    文档目录 = Path.home() / "Documents"
+    基础目录 = 文档目录 if 文档目录.exists() else Path.home()
+    目录列表.append(基础目录 / 应用目录名)
+    if _看起来像旧版根数据目录(可执行文件目录()):
+        目录列表.append(可执行文件目录())
     return 目录列表
 
 
 def _迁移旧数据(目标目录: Path) -> None:
     for 旧目录 in _旧数据目录列表():
-        if not 旧目录.exists():
+        if not 旧目录.exists() or 旧目录.resolve() == 目标目录.resolve():
             continue
         目标目录.mkdir(parents=True, exist_ok=True)
         for 子项 in 旧目录.iterdir():
@@ -60,10 +78,8 @@ def 用户数据目录() -> Path:
     自定义目录 = os.environ.get("SRW_GATEWAY_DATA_DIR")
     if 自定义目录:
         路径 = Path(自定义目录)
-    elif 是否已打包():
-        路径 = 可执行文件目录()
     else:
-        路径 = _当前文档数据目录()
+        路径 = _当前执行数据目录()
     if not 路径.exists():
         _迁移旧数据(路径)
     路径.mkdir(parents=True, exist_ok=True)
@@ -90,6 +106,12 @@ def 打包输出目录() -> Path:
     路径 = 项目根目录() / "dist" / "release"
     路径.mkdir(parents=True, exist_ok=True)
     return 路径
+
+
+def 文档目录() -> Path:
+    if 是否已打包():
+        return 可执行文件目录()
+    return 项目根目录() / "docs"
 
 
 def 安全配置源目录() -> Path:

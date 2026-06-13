@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Optional, Union, cast
 
 from fastapi import HTTPException
@@ -59,6 +60,7 @@ class LocalBudgetAndLoggingHandler(CustomLogger):
         super().__init__()
         self.config_manager = config_manager or ConfigManager()
         self.database = database or UsageDatabase()
+        self._pre_call_diagnostics_count = 0
 
     async def async_pre_call_hook(
         self,
@@ -69,9 +71,31 @@ class LocalBudgetAndLoggingHandler(CustomLogger):
     ) -> Optional[Union[Exception, str, dict]]:
         del user_api_key_dict
         del cache
-        del call_type
 
         config = self.config_manager.load()
+        diagnostic_logging_enabled = bool(
+            os.environ.get("SRW_GATEWAY_DIAGNOSTIC_LOGS", "").strip().lower() in {"1", "true", "yes", "on"}
+            or (
+                os.environ.get("SRW_GATEWAY_DIAGNOSTIC_LOGS", "").strip().lower()
+                not in {"0", "false", "no", "off"}
+                and config.enable_diagnostic_logs
+            )
+        )
+
+        if diagnostic_logging_enabled and self._pre_call_diagnostics_count < 10:
+            self._pre_call_diagnostics_count += 1
+            prompt_preview = self._build_prompt_preview(data)
+            LOGGER.info(
+                "LiteLLM pre_call 诊断[%d]: call_type=%s model=%s keys=%s has_messages=%s has_input=%s preview=%s",
+                self._pre_call_diagnostics_count,
+                call_type,
+                data.get("model", ""),
+                sorted(str(key) for key in data.keys()),
+                "messages" in data,
+                "input" in data,
+                prompt_preview,
+            )
+
         monthly_budget = float(config.monthly_budget_usd or 0.0)
         if monthly_budget <= 0:
             return data
@@ -81,6 +105,26 @@ class LocalBudgetAndLoggingHandler(CustomLogger):
             raise HTTPException(status_code=402, detail="本机本月预算已超限。")
 
         return data
+
+    @staticmethod
+    def _build_prompt_preview(data: dict) -> str:
+        messages = data.get("messages")
+        if isinstance(messages, list) and messages:
+            last_message = messages[-1]
+            if isinstance(last_message, dict):
+                content = last_message.get("content", "")
+                if isinstance(content, str):
+                    return content[:200]
+                if isinstance(content, list):
+                    return str(content)[:200]
+
+        input_data = data.get("input")
+        if isinstance(input_data, str):
+            return input_data[:200]
+        if isinstance(input_data, list) and input_data:
+            return str(input_data[:200])[:200]
+
+        return ""
 
     async def async_log_success_event(
         self,

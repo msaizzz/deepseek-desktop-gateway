@@ -1,49 +1,20 @@
 $ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
 
-Set-Location $PSScriptRoot\..
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
+Set-Location $repoRoot
 
-if (-not (Test-Path .venv)) {
-    py -m venv .venv
+$venvPython = Join-Path $repoRoot '.venv\Scripts\python.exe'
+if (-not (Test-Path $venvPython)) {
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        py -m venv (Join-Path $repoRoot '.venv')
+    }
+    else {
+        python -m venv (Join-Path $repoRoot '.venv')
+    }
 }
 
-. .\.venv\Scripts\Activate.ps1
-
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python -m pip install pyinstaller
-
-if (Test-Path build) {
-    Remove-Item build -Recurse -Force
+& $venvPython (Join-Path $PSScriptRoot 'build_release.py')
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
 }
-
-if (Test-Path dist\DeepSeekDesktopGateway) {
-    Remove-Item dist\DeepSeekDesktopGateway -Recurse -Force
-}
-
-python -m PyInstaller -y --clean packaging\pyinstaller.spec
-
-$releaseDir = Join-Path (Get-Location) 'dist\release'
-if (-not (Test-Path $releaseDir)) {
-    New-Item -ItemType Directory -Path $releaseDir | Out-Null
-}
-
-$appDir = Join-Path $releaseDir 'DeepSeekDesktopGateway'
-if (Test-Path $appDir) {
-    Remove-Item $appDir -Recurse -Force
-}
-
-Copy-Item dist\DeepSeekDesktopGateway $appDir -Recurse
-Copy-Item docs\*.md $releaseDir
-
-$launcherScript = @"
-@echo off
-setlocal
-cd /d "%~dp0DeepSeekDesktopGateway"
-start "" "DeepSeekDesktopGateway.exe"
-endlocal
-"@
-
-Set-Content -Path (Join-Path $releaseDir 'Launch-DeepSeekDesktopGateway.cmd') -Value $launcherScript -Encoding Ascii
-
-Write-Host "Release package created: $releaseDir"
-Write-Host "Double-click dist\release\Launch-DeepSeekDesktopGateway.cmd to start the GUI."

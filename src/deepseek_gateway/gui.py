@@ -40,7 +40,7 @@ from .config_manager import ConfigManager
 from .database import UsageDatabase
 from .gateway_service import GatewayService
 from .logger_setup import 日志文件路径
-from .runtime_paths import 可执行文件目录, 安全配置源目录, 安全配置用户目录, 报表目录, 用户数据目录, 项目根目录
+from .runtime_paths import 当前执行目录, 可执行文件目录, 安全配置源目录, 安全配置用户目录, 报表目录, 文档目录, 用户数据目录
 from .security import verify_admin_password
 from .security_config import SecuritySettings
 from .security_guard import SecurityGuardManager
@@ -296,8 +296,7 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _open_doc(self, file_name: str) -> None:
-        docs_root = 可执行文件目录().parent if (可执行文件目录() / "_internal").exists() else 项目根目录() / "docs"
-        doc_path = docs_root / file_name
+        doc_path = 文档目录() / file_name
         if not doc_path.exists():
             QMessageBox.warning(self, "文件不存在", f"未找到文档：{doc_path}")
             return
@@ -723,6 +722,9 @@ class MainWindow(QMainWindow):
         self.api_key_input.setPlaceholderText("保存后将写入当前运行模式对应的本地安全存储")
         self.startup_checkbox = QCheckBox("开机自动启动")
         self.startup_checkbox.setChecked(autostart_enabled())
+        self.diagnostic_logs_checkbox = QCheckBox("启用高频诊断日志")
+        self.diagnostic_logs_checkbox.setChecked(self.config.enable_diagnostic_logs)
+        self.diagnostic_logs_checkbox.setToolTip("默认关闭。开启后会输出请求级和 guardrail 级诊断日志。")
         self.admin_password_input = QLineEdit()
         self.admin_password_input.setEchoMode(QLineEdit.Password)
         self.new_password_input = QLineEdit()
@@ -736,6 +738,7 @@ class MainWindow(QMainWindow):
         form.addRow("上游基础地址", self.base_url_input)
         form.addRow("上游 API Key", self.api_key_input)
         form.addRow("", self.startup_checkbox)
+        form.addRow("", self.diagnostic_logs_checkbox)
         form.addRow("当前管理员密码", self.admin_password_input)
         form.addRow("设置新管理员密码", self.new_password_input)
 
@@ -756,7 +759,7 @@ class MainWindow(QMainWindow):
             form.addRow(f"{model_name} 输入 / 百万 tokens（人民币）", normal_input)
             form.addRow(f"{model_name} 输出 / 百万 tokens（人民币）", output_input)
 
-        tip_label = QLabel("进入设置页需要管理员密码。预算和模型单价统一按人民币填写；LiteLLM 将按缓存命中、输入、输出三档价格参与本地预算与报表记账。")
+        tip_label = QLabel("进入设置页需要管理员密码。预算和模型单价统一按人民币填写；LiteLLM 将按缓存命中、输入、输出三档价格参与本地预算与报表记账。高频诊断日志默认关闭，保存设置后下次启动网关生效。")
         tip_label.setWordWrap(True)
         layout.addWidget(tip_label)
 
@@ -831,6 +834,7 @@ class MainWindow(QMainWindow):
             buttons.addWidget(button)
 
         layout.addWidget(self.ops_status)
+        layout.addWidget(QLabel(f"当前执行目录：{当前执行目录()}"))
         layout.addWidget(QLabel(f"当前数据目录：{用户数据目录()}"))
         layout.addLayout(buttons)
         layout.addWidget(self.ops_log_text)
@@ -1056,6 +1060,7 @@ class MainWindow(QMainWindow):
             return
         config.port = int(port_text)
         config.monthly_budget_usd = float(budget_text)
+        config.enable_diagnostic_logs = self.diagnostic_logs_checkbox.isChecked()
         config.upstream_base_url = self.base_url_input.text().strip() or config.upstream_base_url
         for model_name, inputs in self.model_price_inputs.items():
             config.models[model_name].cache_read_input_per_million = float(inputs["cache"].text().strip() or 0.0)
@@ -1076,7 +1081,13 @@ class MainWindow(QMainWindow):
             self.config_manager.save(config)
             set_autostart_enabled(self.startup_checkbox.isChecked())
             self._session_admin_password = current_password
-            LOGGER.info("设置已更新，设备=%s 端口=%s 预算=%.2f", config.device_id, config.port, config.monthly_budget_usd)
+            LOGGER.info(
+                "设置已更新，设备=%s 端口=%s 预算=%.2f diagnostics=%s",
+                config.device_id,
+                config.port,
+                config.monthly_budget_usd,
+                config.enable_diagnostic_logs,
+            )
             self.refresh_overview()
             QMessageBox.information(self, "保存成功", "设置已经更新。")
         except Exception as exc:

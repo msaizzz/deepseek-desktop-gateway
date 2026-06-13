@@ -25,9 +25,14 @@ def _resolve_exe_file(project_root: Path) -> Path:
     return project_root / "dist" / "DeepSeekDesktopGateway.exe"
 
 
+def _release_security_dir(project_root: Path) -> Path:
+    return project_root / "dist" / "release" / "security"
+
+
 def collect_release_summary(project_root: Path) -> dict[str, object]:
     analysis_file = _analysis_file(project_root)
     exe_file = _resolve_exe_file(project_root)
+    security_dir = _release_security_dir(project_root)
     analysis_text = analysis_file.read_text(encoding="utf-8", errors="ignore") if analysis_file.exists() else ""
     spec_text = (project_root / "packaging" / "pyinstaller.spec").read_text(encoding="utf-8", errors="ignore")
 
@@ -60,6 +65,10 @@ def collect_release_summary(project_root: Path) -> dict[str, object]:
                 and "openai_public_file" in spec_text
             )
         ),
+        "release_has_security_dir": security_dir.exists(),
+        "release_has_security_yaml": (security_dir / "security.yaml").exists(),
+        "release_has_blocked_words": (security_dir / "blocked_words.yaml").exists(),
+        "release_has_regex_patterns": (security_dir / "regex_patterns.yaml").exists(),
         "dist_has_openai_public": True,
         "analysis_file": str(analysis_file),
         "dist_file": str(exe_file),
@@ -74,6 +83,14 @@ def verify_release_or_raise(project_root: Path) -> dict[str, object]:
     summary = collect_release_summary(project_root)
     if not summary["analysis_has_openai_public"]:
         raise RuntimeError("发布前检查失败：PyInstaller 分析结果中未包含 tiktoken openai_public 插件。")
+    if not summary["release_has_security_dir"]:
+        raise RuntimeError("发布前检查失败：dist/release/security 目录不存在。")
+    if not summary["release_has_security_yaml"]:
+        raise RuntimeError("发布前检查失败：dist/release/security/security.yaml 不存在。")
+    if not summary["release_has_blocked_words"]:
+        raise RuntimeError("发布前检查失败：dist/release/security/blocked_words.yaml 不存在。")
+    if not summary["release_has_regex_patterns"]:
+        raise RuntimeError("发布前检查失败：dist/release/security/regex_patterns.yaml 不存在。")
     if not summary["startup_ok"]:
         raise RuntimeError(
             f"发布前检查失败：EXE 启动后 5 秒内未保持运行。返回值={summary['startup_returncode_after_5s']} {summary['startup_error']}"

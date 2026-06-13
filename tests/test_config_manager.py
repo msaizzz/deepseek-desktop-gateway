@@ -6,10 +6,22 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src.deepseek_gateway.config_manager import ConfigManager
+from src.deepseek_gateway.config_manager import AppConfig, ConfigManager
 
 
 class ConfigManagerTests(unittest.TestCase):
+    def test_save_and_load_persists_diagnostic_logging_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manager = ConfigManager(root)
+            config = AppConfig.default()
+            config.enable_diagnostic_logs = True
+
+            manager.save(config)
+
+            reloaded = manager.load()
+            self.assertTrue(reloaded.enable_diagnostic_logs)
+
     def test_current_user_secret_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

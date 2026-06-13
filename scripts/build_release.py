@@ -62,12 +62,14 @@ def install_dependencies() -> None:
 
 
 def _pyinstaller_ready() -> bool:
-    try:
-        import PyInstaller  # noqa: F401
-        import litellm      # noqa: F401
-        return True
-    except ImportError:
-        return False
+    result = subprocess.run(
+        [str(VENV_PYTHON), "-c", "import PyInstaller, litellm"],
+        cwd=ROOT_DIR,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
 
 
 def clean_outputs() -> None:
