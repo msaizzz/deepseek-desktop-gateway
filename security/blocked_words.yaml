@@ -1,0 +1,59 @@
+# ============================================================
+# SRW DeepSeek 本地桌面网关 — 关键词黑名单
+# ============================================================
+# 位置: {程序目录}/security/blocked_words.yaml
+#
+# 此文件定义需要拦截或记录的关键词。
+# 格式与 LiteLLM ContentFilterGuardrail 的 blocked_words_file 兼容。
+#
+# 每条规则包含:
+#   keyword     - 要匹配的关键词（大小写不敏感）
+#   action      - BLOCK(拦截请求) / MASK(掩码替换) / LOG(仅标注为审计意图)
+#   description - 分类说明
+#
+# 注意：当前实现坚持使用 LiteLLM 原生 content-filter。
+# LiteLLM 原生关键词动作只支持 BLOCK / MASK；LOG 规则会保留在源文件中，
+# 但不会注入运行时 guardrails。
+#
+# 分类说明:
+#   1. 国家秘密相关    — 密级标识、涉密管理标记
+#   2. 基础安全审计    — 凭证/密钥相关词，仅记录不阻断
+#
+# 修改后需要重启网关才能生效。
+# ============================================================
+
+blocked_words:
+  # ==========================================
+  # 1. 国家秘密相关 (BLOCK)
+  # ==========================================
+  - keyword: "国家秘密"
+    action: BLOCK
+    description: "国家秘密保护-核心涉密表述"
+  - keyword: "国家机密"
+    action: BLOCK
+    description: "国家秘密保护-核心涉密表述"
+  - keyword: "绝密"
+    action: BLOCK
+    description: "国家秘密保护-密级标识"
+  - keyword: "秘密级"
+    action: BLOCK
+    description: "国家秘密保护-密级标识"
+  - keyword: "保密期限"
+    action: BLOCK
+    description: "国家秘密保护-涉密文件字段"
+  - keyword: "解密条件"
+    action: BLOCK
+    description: "国家秘密保护-涉密文件字段"
+
+  # ==========================================
+  # 2. 基础安全审计 (LOG — 不阻断，仅审计)
+  # ==========================================
+  - keyword: "管理员密码"
+    action: LOG
+    description: "基础安全审计-凭证试探"
+  - keyword: "数据库密码"
+    action: LOG
+    description: "基础安全审计-凭证试探"
+  - keyword: "API密钥"
+    action: LOG
+    description: "基础安全审计-密钥试探"

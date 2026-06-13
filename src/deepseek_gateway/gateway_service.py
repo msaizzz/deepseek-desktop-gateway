@@ -26,6 +26,8 @@ from .budgeting import BudgetStatus, month_key
 from .config_manager import AppConfig, ConfigManager
 from .database import UsageDatabase
 from .runtime_paths import 用户数据目录
+from .security_config import SecuritySettings
+from .security_guard import SecurityGuardManager
 
 
 LOGGER = logging.getLogger(__name__)
@@ -44,6 +46,7 @@ class GatewayService:
         self.config_manager = config_manager
         self.database = database
         self.runtime: GatewayRuntime | None = None
+        self._security_interception_temporarily_disabled = False
 
     def build_app(self) -> FastAPI:
         config = self.config_manager.load()
@@ -53,6 +56,7 @@ class GatewayService:
 
         config_path = self._write_runtime_config(config=config, upstream_key=upstream_key)
         self._prepare_litellm_environment(config_path)
+        self._reset_litellm_guardrail_state()
 
         proxy_server = importlib.import_module("litellm.proxy.proxy_server")
         app = getattr(proxy_server, "app", None)
@@ -108,10 +112,56 @@ class GatewayService:
     def is_running(self) -> bool:
         return bool(self.runtime and self.runtime.thread.is_alive())
 
+    def set_security_interception_temporarily_disabled(self, disabled: bool) -> None:
+        self._security_interception_temporarily_disabled = disabled
+
+    def is_security_interception_temporarily_disabled(self) -> bool:
+        return self._security_interception_temporarily_disabled
+
     def _prepare_litellm_environment(self, config_path: Path) -> None:
         os.environ["CONFIG_FILE_PATH"] = str(config_path)
         os.environ["LITELLM_DONT_SHOW_FEEDBACK_BOX"] = "true"
         os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")
+
+    def _reset_litellm_guardrail_state(self) -> None:
+        """清理 LiteLLM 进程级 guardrail 状态，避免同进程重启沿用旧配置。"""
+        try:
+            litellm_module = importlib.import_module("litellm")
+        except Exception:
+            LOGGER.debug("LiteLLM 尚未加载，跳过 guardrail 状态清理。")
+            return
+
+        setattr(litellm_module, "guardrail_name_config_map", {})
+
+        try:
+            init_guardrails_module = importlib.import_module(
+                "litellm.proxy.guardrails.init_guardrails"
+            )
+            setattr(init_guardrails_module, "all_guardrails", [])
+        except Exception:
+            LOGGER.debug("清理 LiteLLM legacy guardrail 列表失败。", exc_info=True)
+
+        try:
+            registry_module = importlib.import_module(
+                "litellm.proxy.guardrails.guardrail_registry"
+            )
+            handler = getattr(registry_module, "IN_MEMORY_GUARDRAIL_HANDLER", None)
+            if handler is not None:
+                config_guardrail_ids = [
+                    guardrail_id
+                    for guardrail_id, source in getattr(handler, "_sources", {}).items()
+                    if source == "config"
+                ]
+                for guardrail_id in config_guardrail_ids:
+                    handler.delete_in_memory_guardrail(guardrail_id)
+        except Exception:
+            LOGGER.debug("清理 LiteLLM v2 guardrail 注册表失败。", exc_info=True)
+
+        proxy_server = sys.modules.get("litellm.proxy.proxy_server")
+        if proxy_server is not None:
+            llm_router = getattr(proxy_server, "llm_router", None)
+            if llm_router is not None and hasattr(llm_router, "guardrail_list"):
+                llm_router.guardrail_list = []
 
     def _trim_to_gateway_routes(self, app: FastAPI) -> None:
         if getattr(app.state, "srw_gateway_routes_trimmed", False):
@@ -169,6 +219,10 @@ class GatewayService:
                 "callbacks": ["runtime_callbacks.local_budget_and_logging_handler"],
             },
         }
+
+        # 注入安全护栏配置
+        self._inject_guardrails_config(runtime_config)
+
         config_path = self._runtime_config_path()
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(
@@ -177,6 +231,26 @@ class GatewayService:
         )
         LOGGER.info("已写入 LiteLLM 运行配置: %s", config_path)
         return config_path
+
+    def _inject_guardrails_config(self, runtime_config: dict) -> None:
+        """加载安全配置并注入到运行时 YAML 中。"""
+        try:
+            if self._security_interception_temporarily_disabled:
+                LOGGER.warning("安全拦截已被本次会话临时关闭，跳过护栏配置注入。")
+                return
+
+            security_settings = SecuritySettings.load()
+            if not security_settings.enabled:
+                LOGGER.info("安全过滤已禁用，跳过护栏配置注入。")
+                return
+
+            manager = SecurityGuardManager(security_settings)
+            guardrails_config = manager.build_guardrails_config()
+            if guardrails_config is not None:
+                runtime_config.update(guardrails_config)
+                LOGGER.info("安全护栏配置已注入运行时配置。")
+        except Exception:
+            LOGGER.exception("安全护栏配置注入失败，网关将以无安全过滤模式运行。")
 
     @staticmethod
     def _runtime_config_path() -> Path:

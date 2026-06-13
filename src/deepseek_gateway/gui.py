@@ -40,8 +40,10 @@ from .config_manager import ConfigManager
 from .database import UsageDatabase
 from .gateway_service import GatewayService
 from .logger_setup import 日志文件路径
-from .runtime_paths import 可执行文件目录, 报表目录, 用户数据目录, 项目根目录
+from .runtime_paths import 可执行文件目录, 安全配置源目录, 安全配置用户目录, 报表目录, 用户数据目录, 项目根目录
 from .security import verify_admin_password
+from .security_config import SecuritySettings
+from .security_guard import SecurityGuardManager
 
 
 APP_VERSION = "0.1.0"
@@ -113,12 +115,21 @@ class MainWindow(QMainWindow):
         self._tab_switching = False
         self._previous_tab_index = 0
         self._session_admin_password = ""
+        # 安全过滤页控件（在 _build_security_tab 中赋值）
+        self.security_status_label: QLabel | None = None
+        self.security_temporary_status_label: QLabel | None = None
+        self.security_config_files_text: QPlainTextEdit | None = None
+        self.security_stats_label: QLabel | None = None
+        self.security_events_text: QPlainTextEdit | None = None
+        self.disable_security_button: QPushButton | None = None
+        self.enable_security_button: QPushButton | None = None
         self._setup_menu_bar()
         self._setup_tray_icon()
 
         root = QWidget()
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_overview_tab(), "概览")
+        self.tabs.addTab(self._build_security_tab(), "安全过滤")
         self.tabs.addTab(self._build_settings_tab(), "设置")
         self.tabs.addTab(self._build_reports_tab(), "报表")
         self.tabs.addTab(self._build_history_tab(), "历史")
@@ -229,7 +240,7 @@ class MainWindow(QMainWindow):
     def _handle_tab_changed(self, index: int) -> None:
         if self._tab_switching:
             return
-        settings_index = 1
+        settings_index = self._find_tab_index("设置")
         if index == settings_index and not self._settings_unlocked:
             if not self._request_settings_unlock():
                 self._tab_switching = True
@@ -238,6 +249,12 @@ class MainWindow(QMainWindow):
                 return
             self._settings_unlocked = True
         self._previous_tab_index = index
+
+    def _find_tab_index(self, tab_name: str) -> int:
+        for i in range(self.tabs.count()):
+            if self.tabs.tabText(i) == tab_name:
+                return i
+        return -1
 
     def _request_settings_unlock(self) -> bool:
         password, accepted = QInputDialog.getText(
@@ -367,6 +384,321 @@ class MainWindow(QMainWindow):
         layout.addWidget(value_label)
         layout.addWidget(detail_label)
         return frame, value_label, detail_label
+
+    def _build_security_tab(self) -> QWidget:
+        """构建安全过滤标签页。
+
+        展示安全配置状态、已加载的配置文件、今日拦截统计和拦截日志。
+        不提供编辑功能——用户使用外部文本编辑器修改 YAML 配置文件。
+        """
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(12)
+
+        # ---- 安全状态面板 ----
+        status_frame = QFrame(widget)
+        status_frame.setFrameShape(QFrame.StyledPanel)
+        status_frame.setStyleSheet(
+            "QFrame { background: #262d37; border: 1px solid #384150; border-radius: 8px; padding: 12px; }"
+        )
+        status_layout = QVBoxLayout(status_frame)
+        status_title = QLabel("🛡️ 安全状态", status_frame)
+        status_title.setStyleSheet("font-size: 14px; color: #f8fafc; font-weight: 700;")
+        self.security_status_label = QLabel("正在加载...", status_frame)
+        self.security_status_label.setWordWrap(True)
+        self.security_status_label.setStyleSheet("font-size: 12px; color: #cbd5e1;")
+        self.security_temporary_status_label = QLabel("正在检查临时状态...", status_frame)
+        self.security_temporary_status_label.setWordWrap(True)
+        self.security_temporary_status_label.setStyleSheet("font-size: 12px; color: #fbbf24; font-weight: 600;")
+        security_toggle_buttons = QHBoxLayout()
+        self.disable_security_button = QPushButton("关闭安全拦截")
+        self.disable_security_button.clicked.connect(self._disable_security_interception_temporarily)
+        self.enable_security_button = QPushButton("恢复安全拦截")
+        self.enable_security_button.clicked.connect(self._enable_security_interception)
+        security_toggle_buttons.addWidget(self.disable_security_button)
+        security_toggle_buttons.addWidget(self.enable_security_button)
+        security_toggle_buttons.addStretch(1)
+        status_layout.addWidget(status_title)
+        status_layout.addWidget(self.security_status_label)
+        status_layout.addWidget(self.security_temporary_status_label)
+        status_layout.addLayout(security_toggle_buttons)
+
+        # ---- 配置文件面板 ----
+        config_frame = QFrame(widget)
+        config_frame.setFrameShape(QFrame.StyledPanel)
+        config_frame.setStyleSheet(
+            "QFrame { background: #262d37; border: 1px solid #384150; border-radius: 8px; padding: 12px; }"
+        )
+        config_layout = QVBoxLayout(config_frame)
+        config_title = QLabel("📄 已加载的配置文件", config_frame)
+        config_title.setStyleSheet("font-size: 14px; color: #f8fafc; font-weight: 700;")
+        self.security_config_files_text = QPlainTextEdit(config_frame)
+        self.security_config_files_text.setReadOnly(True)
+        self.security_config_files_text.setMaximumBlockCount(20)
+        self.security_config_files_text.setStyleSheet(
+            "QPlainTextEdit { background: #1e2530; color: #e2e8f0; border: 1px solid #384150; font-size: 11px; }"
+        )
+        self.security_config_files_text.setFixedHeight(120)
+
+        # 配置文件操作按钮
+        config_buttons = QHBoxLayout()
+        open_config_dir_btn = QPushButton("打开配置目录")
+        open_config_dir_btn.clicked.connect(
+            lambda: self._open_directory(安全配置用户目录())
+        )
+        reload_config_btn = QPushButton("重新加载配置")
+        reload_config_btn.clicked.connect(self._refresh_security_view)
+        reload_config_btn.setToolTip("修改配置文件后点击刷新页面展示，但需重启网关才能生效。")
+        for btn in (open_config_dir_btn, reload_config_btn):
+            config_buttons.addWidget(btn)
+        config_buttons.addStretch(1)
+
+        config_layout.addWidget(config_title)
+        config_layout.addWidget(self.security_config_files_text)
+        config_layout.addLayout(config_buttons)
+
+        # ---- 拦截统计面板 ----
+        stats_frame = QFrame(widget)
+        stats_frame.setFrameShape(QFrame.StyledPanel)
+        stats_frame.setStyleSheet(
+            "QFrame { background: #262d37; border: 1px solid #384150; border-radius: 8px; padding: 12px; }"
+        )
+        stats_layout = QVBoxLayout(stats_frame)
+        self.security_stats_label = QLabel("今日统计：加载中...", stats_frame)
+        self.security_stats_label.setStyleSheet("font-size: 13px; color: #f8fafc; font-weight: 600;")
+
+        self.security_events_text = QPlainTextEdit(stats_frame)
+        self.security_events_text.setReadOnly(True)
+        self.security_events_text.setMaximumBlockCount(200)
+        self.security_events_text.setStyleSheet(
+            "QPlainTextEdit { background: #1e2530; color: #e2e8f0; border: 1px solid #384150; font-size: 11px; font-family: 'Consolas', 'Courier New', monospace; }"
+        )
+
+        # 导出按钮
+        events_buttons = QHBoxLayout()
+        export_events_btn = QPushButton("导出拦截日志 CSV")
+        export_events_btn.clicked.connect(self._export_security_events_csv)
+        refresh_events_btn = QPushButton("刷新日志")
+        refresh_events_btn.clicked.connect(self._refresh_security_view)
+        for btn in (export_events_btn, refresh_events_btn):
+            events_buttons.addWidget(btn)
+        events_buttons.addStretch(1)
+
+        stats_layout.addWidget(self.security_stats_label)
+        stats_layout.addWidget(self.security_events_text)
+        stats_layout.addLayout(events_buttons)
+
+        layout.addWidget(status_frame)
+        layout.addWidget(config_frame)
+        layout.addWidget(stats_frame)
+        layout.addStretch(1)
+        return widget
+
+    def _refresh_security_view(self) -> None:
+        """刷新安全过滤页面的状态和日志展示。"""
+        if self.security_status_label is None:
+            return
+
+        try:
+            security = SecuritySettings.load()
+        except Exception:
+            self.security_status_label.setText("⚠️ 安全配置加载失败，安全过滤已禁用。")
+            return
+
+        # 安全状态
+        status_lines = []
+        temporarily_disabled = self.gateway_service.is_security_interception_temporarily_disabled()
+        if self.security_temporary_status_label is not None:
+            if temporarily_disabled:
+                self.security_temporary_status_label.setText(
+                    "⏸️ 当前会话已临时关闭安全拦截。该状态不会写入配置，重启程序后自动恢复。"
+                )
+            else:
+                self.security_temporary_status_label.setText(
+                    "✅ 当前会话正在执行安全拦截。可临时关闭，关闭前需要管理员密码。"
+                )
+        if self.disable_security_button is not None:
+            self.disable_security_button.setEnabled(not temporarily_disabled)
+        if self.enable_security_button is not None:
+            self.enable_security_button.setEnabled(temporarily_disabled)
+
+        if security.enabled:
+            if temporarily_disabled:
+                status_lines.append("⏸️ 安全过滤总开关：配置已启用，但当前会话临时关闭")
+            else:
+                status_lines.append("✅ 安全过滤总开关：已启用")
+
+            cf = security.content_filter
+            status_lines.append(
+                f"   内容过滤：{'✅ 运行中' if cf.enabled else '⬜ 未启用'} "
+                f"(模式: {cf.mode}, 严重级别: {cf.severity_threshold})"
+            )
+
+            pi = security.pii_masking
+            status_lines.append(
+                f"   PII 脱敏：{'✅ 运行中' if pi.enabled else '⬜ 未启用'} "
+                f"({len(pi.patterns)} 条规则)"
+            )
+
+            inj = security.injection_detection
+            status_lines.append(
+                f"   注入检测：{'✅ 运行中' if inj.enabled else '⬜ 未启用（第二期）'}"
+            )
+
+            om = security.output_moderation
+            status_lines.append(
+                f"   输出审核：{'✅ 运行中' if om.enabled else '⬜ 未启用（第二期）'}"
+            )
+        else:
+            status_lines.append("⚠️ 安全过滤总开关：已禁用")
+        self.security_status_label.setText("\n".join(status_lines))
+
+        # 配置文件列表
+        default_dir = SecuritySettings.default_config_dir()
+        user_dir = SecuritySettings.user_config_dir()
+        manager = SecurityGuardManager(security, default_dir)
+        config_files = manager.resolve_config_files()
+
+        files_lines = []
+        # 确定实际使用的配置目录
+        effective_dir = user_dir if (user_dir / "security.yaml").exists() else default_dir
+        files_lines.append(f"配置目录: {effective_dir}")
+        files_lines.append("")
+
+        for file_name, file_path in config_files.items():
+            if file_path is None:
+                files_lines.append(f"  ✕ {file_name} — 文件不存在")
+            else:
+                files_lines.append(f"  ✓ {file_name}")
+                files_lines.append(f"    路径: {file_path}")
+        files_lines.append("")
+        if temporarily_disabled:
+            files_lines.append("提示：当前会话临时关闭了安全拦截；该状态不会修改这些配置文件。")
+        else:
+            files_lines.append("提示：当前会话使用下列配置文件生成安全拦截。")
+        files_lines.append("")
+        files_lines.append("提示：用文本编辑器修改配置文件后，需重启网关生效。")
+
+        if self.security_config_files_text is not None:
+            self.security_config_files_text.setPlainText("\n".join(files_lines))
+
+        # 拦截统计
+        try:
+            stats = self.database.security_stats_today()
+            self.security_stats_label.setText(
+                f"今日统计 — 🔴 拦截: {stats.block_count} 次 | "
+                f"🟡 脱敏: {stats.mask_count} 次 | "
+                f"📝 记录: {stats.log_count} 次 | "
+                f"合计: {stats.total_events} 次"
+            )
+
+            events = self.database.security_events_today(200)
+            if not events:
+                self.security_events_text.setPlainText("今日暂无安全拦截事件。")
+            else:
+                event_lines = []
+                for e in events:
+                    event_lines.append(
+                        f"{e.timestamp} | {e.event_type:20s} | {e.action:5s} | "
+                        f"{e.matched_content[:60]:60s} | {e.guardrail_name}"
+                    )
+                self.security_events_text.setPlainText("\n".join(event_lines))
+        except Exception as exc:
+            LOGGER.warning("刷新安全事件日志失败: %s", exc)
+            if self.security_stats_label is not None:
+                self.security_stats_label.setText("今日统计：加载失败")
+            if self.security_events_text is not None:
+                self.security_events_text.setPlainText("安全事件日志加载失败。")
+
+    def _disable_security_interception_temporarily(self) -> None:
+        if self.gateway_service.is_security_interception_temporarily_disabled():
+            self._refresh_security_view()
+            return
+        if not self._request_admin_password_for_action("关闭安全拦截"):
+            return
+        reply = QMessageBox.question(
+            self,
+            "确认临时关闭",
+            "临时关闭后，当前程序会话中的请求将不再执行安全拦截。\n如网关正在运行，会自动重启后生效。是否继续？",
+        )
+        if reply != QMessageBox.Yes:
+            return
+        self._apply_temporary_security_interception_state(disabled=True)
+
+    def _enable_security_interception(self) -> None:
+        if not self.gateway_service.is_security_interception_temporarily_disabled():
+            self._refresh_security_view()
+            return
+        self._apply_temporary_security_interception_state(disabled=False)
+
+    def _apply_temporary_security_interception_state(self, *, disabled: bool) -> None:
+        previous_disabled = self.gateway_service.is_security_interception_temporarily_disabled()
+        if previous_disabled == disabled:
+            self._refresh_security_view()
+            return
+
+        was_running = self.gateway_service.is_running()
+        self.gateway_service.set_security_interception_temporarily_disabled(disabled)
+
+        try:
+            if was_running:
+                self.gateway_service.stop()
+                self.gateway_service.start()
+        except Exception as exc:
+            LOGGER.exception("切换安全拦截临时状态失败")
+            self.gateway_service.set_security_interception_temporarily_disabled(previous_disabled)
+            if was_running and not self.gateway_service.is_running():
+                try:
+                    self.gateway_service.start()
+                except Exception:
+                    LOGGER.exception("回滚安全拦截临时状态后重启网关失败")
+            QMessageBox.critical(self, "操作失败", f"切换安全拦截状态失败：{exc}")
+            self.refresh_overview()
+            return
+
+        if disabled:
+            message = "安全拦截已临时关闭。"
+        else:
+            message = "安全拦截已恢复。"
+        if was_running:
+            message += " 网关已自动重启并生效。"
+        else:
+            message += " 下次启动网关时生效。"
+        QMessageBox.information(self, "操作完成", message)
+        self.refresh_overview()
+
+    def _export_security_events_csv(self) -> None:
+        """导出安全事件日志为 CSV 文件。"""
+        import csv
+        from datetime import datetime
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        default_target = 报表目录() / f"security-events-{today}.csv"
+        selected_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出安全事件 CSV",
+            str(default_target),
+            "CSV 文件 (*.csv)",
+        )
+        if not selected_path:
+            return
+
+        target = Path(selected_path)
+        events = self.database.security_events_today(10000)
+        with target.open("w", newline="", encoding="utf-8-sig") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(
+                ["时间戳", "模型", "事件类型", "匹配内容", "匹配规则", "动作", "请求预览", "护栏名称"]
+            )
+            for e in events:
+                writer.writerow(
+                    [
+                        e.timestamp, e.model, e.event_type, e.matched_content,
+                        e.matched_rule, e.action, e.request_preview, e.guardrail_name,
+                    ]
+                )
+        LOGGER.info("已导出安全事件 CSV: %s", target)
+        QMessageBox.information(self, "导出成功", f"安全事件日志已导出到：\n{target}")
 
     def _build_settings_tab(self) -> QWidget:
         widget = QWidget()
@@ -685,6 +1017,7 @@ class MainWindow(QMainWindow):
         self._refresh_report_months()
         self._refresh_history_view()
         self._refresh_logs_view()
+        self._refresh_security_view()
 
     def _start_gateway(self) -> None:
         try:

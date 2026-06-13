@@ -90,3 +90,19 @@ def 打包输出目录() -> Path:
     路径 = 项目根目录() / "dist" / "release"
     路径.mkdir(parents=True, exist_ok=True)
     return 路径
+
+
+def 安全配置源目录() -> Path:
+    """返回随程序发布的默认安全配置目录。
+
+    未打包: 项目根目录/security/
+    已打包: 可执行文件目录/security/
+    """
+    return 可执行文件目录() / "security"
+
+
+def 安全配置用户目录() -> Path:
+    """返回用户数据目录下的安全配置目录。"""
+    路径 = 用户数据目录() / "security"
+    路径.mkdir(parents=True, exist_ok=True)
+    return 路径

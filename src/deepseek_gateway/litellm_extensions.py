@@ -131,6 +131,81 @@ class LocalBudgetAndLoggingHandler(CustomLogger):
             status="success",
         )
 
+        # 记录安全护栏事件
+        self._log_guardrail_events(standard_logging_object, model_name, kwargs)
+
+    def _log_guardrail_events(
+        self,
+        standard_logging_object: dict,
+        model_name: str,
+        kwargs: dict,
+    ) -> None:
+        """从 standard_logging_object 中提取 guardrail_information 并写入安全事件表。"""
+        guardrail_info = standard_logging_object.get("guardrail_information")
+        if not guardrail_info:
+            return
+
+        if not isinstance(guardrail_info, list):
+            guardrail_info = [guardrail_info]
+
+        for entry in guardrail_info:
+            if not isinstance(entry, dict):
+                continue
+
+            guardrail_name = str(entry.get("guardrail_name", ""))
+            guardrail_status = str(entry.get("guardrail_status", ""))
+            guardrail_mode = str(entry.get("guardrail_mode", ""))
+
+            if guardrail_status == "success":
+                continue
+
+            # 提取匹配内容
+            matched_content = ""
+            event_type = "unknown"
+            action = "LOG"
+
+            # 尝试从不同字段获取匹配详情
+            guardrail_detail = entry.get("guardrail_detail") or entry.get("detail") or {}
+            if isinstance(guardrail_detail, dict):
+                matched_content = str(guardrail_detail.get("matched_content", ""))
+                event_type = str(guardrail_detail.get("event_type", "guardrail_intervention"))
+                action = str(guardrail_detail.get("action", "LOG"))
+
+            # 从状态推断动作
+            if action == "LOG":
+                if guardrail_status in ("guardrail_intervened", "blocked", "failed"):
+                    action = "BLOCK"
+                elif guardrail_status == "masked":
+                    action = "MASK"
+
+            if not event_type or event_type == "unknown":
+                if action == "BLOCK":
+                    event_type = "keyword_block"
+                elif action == "MASK":
+                    event_type = "pii_mask"
+
+            # 预览请求内容（截断）
+            request_preview = ""
+            messages = kwargs.get("messages", []) or kwargs.get("data", {}).get("messages", [])
+            if isinstance(messages, list) and messages:
+                last_msg = messages[-1]
+                if isinstance(last_msg, dict):
+                    content = last_msg.get("content", "")
+                    if isinstance(content, str):
+                        request_preview = content[:200]
+                    elif isinstance(content, list):
+                        request_preview = str(content)[:200]
+
+            self.database.log_security_event(
+                model=model_name,
+                event_type=event_type,
+                matched_content=matched_content,
+                matched_rule=guardrail_name,
+                action=action,
+                request_preview=request_preview,
+                guardrail_name=guardrail_name,
+            )
+
     async def async_post_call_failure_hook(
         self,
         request_data: dict,

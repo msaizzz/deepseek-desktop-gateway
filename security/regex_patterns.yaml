@@ -1,0 +1,42 @@
+# ============================================================
+# SRW DeepSeek 本地桌面网关 — 自定义正则检测规则
+# ============================================================
+# 位置: {程序目录}/security/regex_patterns.yaml
+#
+# 此文件定义基于正则表达式的检测规则。
+# 格式与 LiteLLM ContentFilterGuardrail 的 patterns 兼容。
+#
+# 每条规则包含:
+#   pattern       - Python 正则表达式
+#   pattern_name  - 规则名称（用于日志标识）
+#   action        - BLOCK(拦截) / MASK(掩码) / LOG(仅标注为审计意图)
+#   description   - 规则说明
+#
+# 注意：LiteLLM 原生 regex pattern 只支持 BLOCK / MASK，
+# 因此 action=LOG 的规则会保留在本文件中，但不会注入运行时 guardrails。
+#
+# 修改后需要重启网关才能生效。
+# ============================================================
+
+patterns:
+
+  # ------ 涉密标记模式 ------
+  # 匹配标准涉密文件标记格式（中文方括号标记法）
+  - pattern: '(绝密|机密|秘密级|涉密)\s*[★☆]?\s*\d*\s*(年|月|日)?'
+    pattern_name: classified_marking
+    action: BLOCK
+    description: "涉密标记模式-拦截"
+
+  # ------ 凭证/密码试探 ------
+  # 仅匹配引号包裹的明文凭证（如 password="abc123"、密码："mypwd"），
+  # 避免误拦代码中的变量赋值（如 password = os.environ.get(...)）。
+  - pattern: '\b(password|passwd|密码|口令)\s*[=:：]\s*[''"][^''"\s]{3,}[''"]'
+    pattern_name: credential_in_text
+    action: BLOCK
+    description: "明文凭证-拦截"
+
+  # ------ API Key 泄露 ------
+  - pattern: '\b(sk-[A-Za-z0-9]{20,})\b'
+    pattern_name: openai_api_key
+    action: BLOCK
+    description: "API Key泄露-拦截"

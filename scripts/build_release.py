@@ -92,6 +92,15 @@ def copy_release_files() -> None:
     if not built_exe.exists():
         raise FileNotFoundError(f"PyInstaller 未产出预期 EXE: {built_exe}")
 
+    # 安全的默认配置文件（随 EXE 发布）
+    security_src = ROOT_DIR / "security"
+    if security_src.exists():
+        security_dst = RELEASE_DIR / "security"
+        if security_dst.exists():
+            remove_tree(security_dst)
+        print("复制安全配置目录: security/")
+        shutil.copytree(security_src, security_dst)
+
     # 仅复制面向终端用户的文档，内部文档（架构说明、发包说明、开发规范等）不随 EXE 发布
     USER_FACING_DOCS = [
         "使用说明.md",

@@ -48,6 +48,26 @@ class MonthlyUsageSnapshot:
     last_request_time: str
 
 
+@dataclass(slots=True)
+class SecurityEvent:
+    timestamp: str
+    model: str
+    event_type: str
+    matched_content: str
+    matched_rule: str
+    action: str
+    request_preview: str
+    guardrail_name: str
+
+
+@dataclass(slots=True)
+class SecurityStats:
+    block_count: int
+    mask_count: int
+    log_count: int
+    total_events: int
+
+
 class UsageDatabase:
     def __init__(self, root_dir: Path | None = None) -> None:
         self.root_dir = root_dir or 用户数据目录()
@@ -92,6 +112,21 @@ class UsageDatabase:
                 connection.execute(
                     "ALTER TABLE usage_logs ADD COLUMN cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0"
                 )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS security_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    model TEXT NOT NULL DEFAULT '',
+                    event_type TEXT NOT NULL,
+                    matched_content TEXT NOT NULL DEFAULT '',
+                    matched_rule TEXT NOT NULL DEFAULT '',
+                    action TEXT NOT NULL,
+                    request_preview TEXT NOT NULL DEFAULT '',
+                    guardrail_name TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
 
     def log_request(
         self,
@@ -312,3 +347,77 @@ class UsageDatabase:
             )
         workbook.save(target_path)
         return target_path
+
+    # ---- security events ----
+
+    def log_security_event(
+        self,
+        *,
+        model: str = "",
+        event_type: str = "",
+        matched_content: str = "",
+        matched_rule: str = "",
+        action: str = "",
+        request_preview: str = "",
+        guardrail_name: str = "",
+    ) -> None:
+        """记录一条安全拦截/脱敏事件。"""
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO security_events (
+                    timestamp, model, event_type, matched_content,
+                    matched_rule, action, request_preview, guardrail_name
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    datetime.now().isoformat(timespec="seconds"),
+                    model,
+                    event_type,
+                    matched_content,
+                    matched_rule,
+                    action,
+                    request_preview,
+                    guardrail_name,
+                ),
+            )
+
+    def security_events_today(self, limit: int = 200) -> list[SecurityEvent]:
+        """获取今日安全事件列表。"""
+        today_prefix = datetime.now().strftime("%Y-%m-%d")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT timestamp, model, event_type, matched_content,
+                       matched_rule, action, request_preview, guardrail_name
+                FROM security_events
+                WHERE timestamp >= ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                (today_prefix, limit),
+            ).fetchall()
+        return [SecurityEvent(**dict(row)) for row in rows]
+
+    def security_stats_today(self) -> SecurityStats:
+        """获取今日安全事件统计。"""
+        today_prefix = datetime.now().strftime("%Y-%m-%d")
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    COALESCE(SUM(CASE WHEN action = 'BLOCK' THEN 1 ELSE 0 END), 0) AS block_count,
+                    COALESCE(SUM(CASE WHEN action = 'MASK' THEN 1 ELSE 0 END), 0) AS mask_count,
+                    COALESCE(SUM(CASE WHEN action = 'LOG' THEN 1 ELSE 0 END), 0) AS log_count,
+                    COUNT(*) AS total_events
+                FROM security_events
+                WHERE timestamp >= ?
+                """,
+                (today_prefix,),
+            ).fetchone()
+        return SecurityStats(
+            block_count=int(row["block_count"]),
+            mask_count=int(row["mask_count"]),
+            log_count=int(row["log_count"]),
+            total_events=int(row["total_events"]),
+        )

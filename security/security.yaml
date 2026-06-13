@@ -1,0 +1,64 @@
+# ============================================================
+# SRW DeepSeek 本地桌面网关 — 安全过滤主配置
+# ============================================================
+# 位置: {程序目录}/security/security.yaml
+#
+# 此文件控制安全过滤的总开关和各模块参数。
+# 修改后需要重启网关才能生效。
+# ============================================================
+
+# ------ 安全过滤总开关 ------
+enabled: true
+
+# ------ 第一期：内容过滤（关键词 + 正则） ------
+content_filter:
+  enabled: true
+  # 拦截阶段: pre_call(请求前) / post_call(响应后) / both
+  mode: pre_call
+  # 关键词黑名单文件（相对于本文件的路径）
+  blocked_words_file: "blocked_words.yaml"
+  # 自定义正则规则文件（相对于本文件的路径）
+  regex_patterns_file: "regex_patterns.yaml"
+  # 内联正则规则（简单规则直接写这里，复杂规则放 regex_patterns.yaml）
+  patterns: []
+  # 严重级别阈值: low / medium / high
+  # 低于此级别的命中仅记录日志，不拦截
+  severity_threshold: medium
+
+# ------ 第一期：PII 个人信息脱敏（默认关闭，可按需启用） ------
+pii_masking:
+  enabled: false
+  # 本地桌面网关默认不处理手机号/邮箱等通用个人联系方式。
+  # 如果你的单位要求对提示词中出现的联系方式或身份证号做脱敏，再改为 true。
+  # 以下模式在请求发送前自动 MASK（掩码替换），不会阻断请求。
+  patterns:
+    # 中国手机号
+    - pattern: '\b1[3-9]\d{9}\b'
+      pattern_name: cn_phone
+      action: MASK
+    # 中国身份证号（18位）
+    - pattern: '\b\d{17}[\dXx]\b'
+      pattern_name: cn_id_card
+      action: MASK
+    # 电子邮箱
+    - pattern: '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+      pattern_name: email
+      action: MASK
+
+# ------ 第二期：提示词注入检测 ------
+injection_detection:
+  enabled: false
+  # 启发式检测（内置规则，零外部依赖）
+  heuristic_check: true
+  # 与已知注入样本的文本相似度阈值（0.0 ~ 1.0）
+  similarity_threshold: 0.8
+  # 是否使用 LLM 二次验证（需要模型支持，会增加延迟和费用）
+  llm_api_check: false
+
+# ------ 第二期：输出内容审核 ------
+output_moderation:
+  enabled: false
+  # 审核阶段: post_call
+  mode: post_call
+  # 复用输入过滤的关键词文件
+  blocked_words_file: "blocked_words.yaml"
